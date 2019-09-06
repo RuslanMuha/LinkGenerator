@@ -1,13 +1,11 @@
 package com.hitecher.service;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
-import java.util.HashSet;
+import java.io.File;
+import java.io.FileWriter;
+import java.util.*;
 import java.io.IOException;
-import java.net.SocketTimeoutException;
 
-import com.hitecher.dto.URLDto;
+import lombok.SneakyThrows;
 import org.jsoup.Jsoup;
 import org.jsoup.Connection;
 import org.jsoup.nodes.Document;
@@ -18,36 +16,41 @@ import org.jsoup.HttpStatusException;
 import org.springframework.cloud.stream.annotation.EnableBinding;
 import org.springframework.cloud.stream.messaging.Source;
 import org.springframework.integration.annotation.InboundChannelAdapter;
-import com.hitecher.exception.DoneParsingException;
 
-@EnableBinding(Source.class)
+
+@EnableBinding({Source.class})
 public class LinksGeneratorService {
-	static private Map<String, URLDto> hrefMap = new HashMap<>();
+    static private List<String> hrefMap = new ArrayList<>();
+    private int count = 0;
+    private int k = 0;
 
-	@InboundChannelAdapter(Source.OUTPUT)
-	public String sendSensorData() {
-		return getLink();
-	}
-
-	private String getLink() {
-		try {
-		    for (int i = 0; ; i += 25) {
-                parseUrl(i);
-            }
-        } catch (DoneParsingException e) {
-            // do nothing, cos this means that LinkedIn returned not 2xx response
-            System.err.println(e.getMessage());
-        } catch (Exception e) {
-		    e.printStackTrace();
+    @InboundChannelAdapter(Source.OUTPUT)
+    public String sendSensorData() {
+        hrefMap.clear();
+        count = 0;
+        List<String> ids = null;
+        try {
+            ids = readFromFile();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
+        return getLink(ids);
+    }
 
-		return hrefMap + "";
-	}
+    @SneakyThrows
+    private String getLink(List<String> listIds) {
+        for (int i = 0; ; i += 25) {
+            if (!parseUrl(i, listIds)) {
+                break;
+            }
+        }
+        Thread.sleep(120000);
+        return hrefMap + "";
+    }
 
-	private void parseUrl(int number) throws Exception {
+    private boolean parseUrl(int number, List<String> listIds) throws Exception {
         Connection.Response response;
-
-	    try {
+        try {
             String urlStart = "https://www.linkedin.com/jobs-guest/jobs/api/jobPostings/jobs?keywords=Developer&location=Israel&sortBy=DD&redirect=false&position=1&pageNum=0&start=";
             response = Jsoup.connect(urlStart + number).ignoreContentType(true)
                     .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
@@ -57,28 +60,62 @@ public class LinksGeneratorService {
                     .followRedirects(false)
                     .execute();
         } catch (HttpStatusException e) {
-	        String errMessage = "Finished batch requests to LinkedIn with statusCode = " + e.getStatusCode() + ". Fetched jobs = " + number;
-	        throw new DoneParsingException(errMessage);
-        } catch (SocketTimeoutException e){
-	        throw new Exception(e.getMessage());
+            return false;
         }
 
-        addLinksToSet(response);
-	}
+        return addLinksToSet(response, listIds);
+    }
 
-	private void addLinksToSet(Connection.Response response) throws IOException {
+    private boolean addLinksToSet(Connection.Response response, List<String> listIds) throws IOException {
         Document doc = response.parse();
 
         Elements xElement = doc.getElementsByAttributeValueMatching("href", "/jobs/view");
+        boolean fl = false;
 
         for (Element rez : xElement) {
+            k++;
             String href = rez.attr("href");
             // TODO save id for future
-            String id = rez.parent().dataset().get("id");
             String shortLink = href.substring(0, href.indexOf("?refId"));
-            URLDto urlDto = URLDto.builder().id(id).url(shortLink).build();
-            System.out.println(urlDto.toString());
-            hrefMap.put(id, urlDto);
+
+
+            if ((fl = !listIds.contains(shortLink)) && count <= 5) {
+                if (count == 0) {
+                    writeToFile(shortLink, false);
+                } else writeToFile(shortLink, true);
+                count++;
+            }
+
+            if (fl) {
+
+                hrefMap.add(shortLink);
+            } else break;
+
         }
+        System.out.println("COUNTER : " + k);
+        return fl;
+    }
+
+    private void writeToFile(String string, boolean notoverwrite) {
+        try (FileWriter writer = new FileWriter("list_id.txt", notoverwrite)) {
+            writer.write(string + "\n");
+            writer.flush();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    public static List<String> readFromFile() throws IOException {
+        List<String> listID = new ArrayList<>();
+        Scanner in = new Scanner(new File("list_id.txt"));
+        while (in.hasNext()) {
+            if (!in.equals("\n")) {
+                String id = in.nextLine();
+                listID.add(id);
+            }
+        }
+
+        return listID;
     }
 }
