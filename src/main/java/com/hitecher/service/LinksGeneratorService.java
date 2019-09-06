@@ -1,27 +1,30 @@
 package com.hitecher.service;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.HashSet;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 
+import com.hitecher.dto.URLDto;
 import org.jsoup.Jsoup;
 import org.jsoup.Connection;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.jsoup.HttpStatusException;
-import org.springframework.stereotype.Service;
+
+import org.springframework.cloud.stream.annotation.EnableBinding;
+import org.springframework.cloud.stream.messaging.Source;
+import org.springframework.integration.annotation.InboundChannelAdapter;
 import com.hitecher.exception.DoneParsingException;
 
-@Service
+@EnableBinding(Source.class)
 public class LinksGeneratorService {
-	static private Set<String> hrefSet = new HashSet<>();
+	static private Map<String, URLDto> hrefMap = new HashMap<>();
 
-    //	@Value("${start.time.timeout}")
-	private Integer timeout;
-
-    //	@InboundChannelAdapter(value = Source.OUTPUT)
+	@InboundChannelAdapter(Source.OUTPUT)
 	public String sendSensorData() {
 		return getLink();
 	}
@@ -38,7 +41,7 @@ public class LinksGeneratorService {
 		    e.printStackTrace();
         }
 
-		return hrefSet + "";
+		return hrefMap + "";
 	}
 
 	private void parseUrl(int number) throws Exception {
@@ -71,10 +74,11 @@ public class LinksGeneratorService {
         for (Element rez : xElement) {
             String href = rez.attr("href");
             // TODO save id for future
-            // String id = rez.parent().dataset().get("id");
+            String id = rez.parent().dataset().get("id");
             String shortLink = href.substring(0, href.indexOf("?refId"));
-
-            hrefSet.add(shortLink);
+            URLDto urlDto = URLDto.builder().id(id).url(shortLink).build();
+            System.out.println(urlDto.toString());
+            hrefMap.put(id, urlDto);
         }
     }
 }
